@@ -1,17 +1,12 @@
-import numpy as np
-from numpy.ctypeslib import ndpointer
-from itertools import permutations, product
-from matplotlib import pyplot as plt
-from PIL import Image
-import glob
-from numpy.fft import fft, ifft
-from numpy.linalg import norm
 from collections import defaultdict
-import pdb
+
+import numpy as np
+from numpy.fft import fft, ifft
+
 
 class CKMEANS:
     def __init__(self, data, nclusters, iteration, randomstate):
-        
+
         """
         randomstate: to create initial centroids
         output: new_centroids -- new centroids after ckmeans
@@ -43,7 +38,7 @@ class CKMEANS:
         r = ifft(fft(centroids[index_of_minimum]) * fft(data_point).conj()).real
         r = r[::3]
         rmax_index = np.argmax(r)
-        point_shift = np.roll(data_point.reshape(8,3), rmax_index)
+        point_shift = np.roll(data_point.reshape(8, 3), rmax_index)
         point_shift = point_shift.flatten()
         return [index_of_minimum, point_shift, data_point]
 
@@ -57,18 +52,22 @@ class CKMEANS:
             distance = {}
             data_points = self.data_points[index_point]
             for index_centroid in range(0, total_cen):
-                distance[index_centroid] = self.compute_euclidean_distance(data_points, centroids[index_centroid])
-            index_of_minimum, point_shift, data_point = self.assign_label_cluster(distance, data_points, centroids)
+                distance[index_centroid] = self.compute_euclidean_distance(
+                    data_points, centroids[index_centroid]
+                )
+            index_of_minimum, point_shift, data_point = self.assign_label_cluster(
+                distance, data_points, centroids
+            )
             label_points[index_of_minimum].append(point_shift)
             label.append(index_of_minimum)
 
-        #import pdb;pdb.set_trace()
+        # import pdb;pdb.set_trace()
         for index_centroid in range(0, total_cen):
-            new_centroids[index_centroid] = np.mean(label_points[index_centroid], axis=0)
-
+            new_centroids[index_centroid] = np.mean(
+                label_points[index_centroid], axis=0
+            )
 
         return [new_centroids, label]
-
 
     def k_means(self):
         k = self.n_clusters
@@ -77,7 +76,7 @@ class CKMEANS:
         new_centroids, label = self.cal_centroids(self.init_centroids)
 
         while self.count < self.total_iteration:
-            if np.allclose(new_centroids, centroids) == False:
+            if np.allclose(new_centroids, centroids) is False:
                 centroids = new_centroids.copy()
                 new_centroids, new_label = self.cal_centroids(new_centroids)
                 self.change.append(sum(np.array(new_label) != np.array(label)))
@@ -89,12 +88,15 @@ class CKMEANS:
         for index_point in range(0, self.total_points):
             distance = {}
             for index_centroid in range(0, k):
-                distance[index_centroid] = self.compute_euclidean_distance(self.data_points[index_point], new_centroids[index_centroid])
-            index_of_minimum, point_shift, data_point = self.assign_label_cluster(distance, self.data_points[index_point], new_centroids)
+                distance[index_centroid] = self.compute_euclidean_distance(
+                    self.data_points[index_point], new_centroids[index_centroid]
+                )
+            index_of_minimum, point_shift, data_point = self.assign_label_cluster(
+                distance, self.data_points[index_point], new_centroids
+            )
             self.cluster_label.append([index_of_minimum, data_point])
 
         self.new_centroids = new_centroids
-
 
     def create_centroids(self):
         k = self.n_clusters
