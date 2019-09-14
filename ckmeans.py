@@ -2,106 +2,97 @@ from collections import defaultdict
 
 import numpy as np
 from numpy.fft import fft, ifft
+from pathos.multiprocessing import ProcessingPool as Pool
+
+POOL = Pool(nodes=8)
 
 
 class CKMEANS:
-    def __init__(self, data, nclusters, iteration, randomstate):
+    def __init__(self, data, n_clusters, max_iterations, seed=0):
+        self.seed = seed
 
-        """
-        randomstate: to create initial centroids
-        output: new_centroids -- new centroids after ckmeans
-                cluster_label -- list of data and their labels
-                count -- time of iteration
-        """
+        self.n_clusters = n_clusters
 
-        self.n_clusters = nclusters
-        self.total_iteration = iteration
-        self.random_state = randomstate
-        self.data_points = data
-        self.total_points = len(data)
-        self.init_centroids = np.array([])
-        self.new_centroids = np.array([])
-        self.cluster_label = []
-        self.change = []
-        self.count = 0
+        self.max_iterations = max_iterations
+        self.total_iterations = 0
+        self.label_convergence = []
 
-    def compute_euclidean_distance(self, point, centroid):
+        self.data = data
+        self.centroids = None
+        self.labels = np.empty(data.shape[0])
+
+    def compute_distance(self, point, centroid):
         r = ifft(fft(centroid) * fft(point).conj()).real
         r = r[::3]
         distance = -2 * max(r)
         distance += np.dot(point, point)
         distance += np.dot(centroid, centroid)
-        return distance
 
-    def assign_label_cluster(self, distance, data_point, centroids):
-        index_of_minimum = min(distance, key=distance.get)
-        r = ifft(fft(centroids[index_of_minimum]) * fft(data_point).conj()).real
-        r = r[::3]
-        rmax_index = np.argmax(r)
-        point_shift = np.roll(data_point.reshape(8, 3), rmax_index)
+        rotation_index = np.argmax(r)
+
+        return distance, rotation_index
+
+    def assign_to_cluster(self, point):
+        distances, rotation_indices = zip(
+            *[self.compute_distance(point, centroid) for centroid in self.centroids]
+        )
+        closest_cluster = np.argmin(distances)
+        rotation_index = rotation_indices[closest_cluster]
+        point_shift = np.roll(point.reshape(8, 3), rotation_index)
         point_shift = point_shift.flatten()
-        return [index_of_minimum, point_shift, data_point]
 
-    def cal_centroids(self, centroids):
-        label_points = defaultdict(list)
-        total_cen = self.n_clusters
-        new_centroids = np.zeros(centroids.shape)
-        label = []
+        return closest_cluster, point_shift
 
-        for index_point in range(0, self.total_points):
-            distance = {}
-            data_points = self.data_points[index_point]
-            for index_centroid in range(0, total_cen):
-                distance[index_centroid] = self.compute_euclidean_distance(
-                    data_points, centroids[index_centroid]
-                )
-            index_of_minimum, point_shift, data_point = self.assign_label_cluster(
-                distance, data_points, centroids
-            )
-            label_points[index_of_minimum].append(point_shift)
-            label.append(index_of_minimum)
-
-        # import pdb;pdb.set_trace()
-        for index_centroid in range(0, total_cen):
-            new_centroids[index_centroid] = np.mean(
-                label_points[index_centroid], axis=0
-            )
-
-        return [new_centroids, label]
-
-    def k_means(self):
+    def init_centroids(self):
         k = self.n_clusters
-        self.create_centroids()
-        centroids = self.init_centroids
-        new_centroids, label = self.cal_centroids(self.init_centroids)
-
-        while self.count < self.total_iteration:
-            if np.allclose(new_centroids, centroids) is False:
-                centroids = new_centroids.copy()
-                new_centroids, new_label = self.cal_centroids(new_centroids)
-                self.change.append(sum(np.array(new_label) != np.array(label)))
-                label = new_label.copy()
-            else:
-                break
-            self.count += 1
-
-        for index_point in range(0, self.total_points):
-            distance = {}
-            for index_centroid in range(0, k):
-                distance[index_centroid] = self.compute_euclidean_distance(
-                    self.data_points[index_point], new_centroids[index_centroid]
-                )
-            index_of_minimum, point_shift, data_point = self.assign_label_cluster(
-                distance, self.data_points[index_point], new_centroids
-            )
-            self.cluster_label.append([index_of_minimum, data_point])
-
-        self.new_centroids = new_centroids
-
-    def create_centroids(self):
-        k = self.n_clusters
-        n_samples = self.data_points.shape[0]
-        random_state = np.random.RandomState(self.random_state)
+        n_samples = self.data.shape[0]
+        random_state = np.random.RandomState(self.seed)
         seeds = random_state.permutation(n_samples)[:k]
-        centers = self.data_points[seeds]
-        self.init_centroids = np.array(centers)
+        centers = self.data[seeds]
+        return np.array(centers)
+
+    def perform_iteration(self):
+        cluster_points = defaultdict(list)
+        # First assign each point to the nearest cluster
+        for point_idx, point in enumerate(self.data):
+            cluster_idx, point_shift = self.assign_to_cluster(point)
+            cluster_points[cluster_idx].append(point_shift)
+            self.labels[point_idx] = cluster_idx
+
+        # Now update the centroids based on the new cluster assignments
+        for cluster_idx, shifted_points in cluster_points.items():
+            self.centroids[cluster_idx] = np.mean(shifted_points, axis=0)
+
+    def run(self):
+        self.centroids = self.init_centroids()
+        while self.total_iterations < self.max_iterations:
+            previous_centroids = self.centroids.copy()
+            previous_labels = self.labels.copy()
+
+            self.perform_iteration()
+
+            self.label_convergence.append(
+                sum(np.array(previous_labels) != np.array(self.labels))
+            )
+
+            if np.allclose(previous_centroids, self.centroids):
+                break
+
+            self.total_iterations += 1
+
+
+class CKMEANS_MULTI(CKMEANS):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def perform_iteration(self):
+        # First assign each point to the nearest cluster
+        results = zip(*POOL.map(self.assign_to_cluster, enumerate(self.data)))
+        cluster_points = defaultdict(list)
+        for point_idx, (cluster_idx, point_shift) in enumerate(results):
+            cluster_points[cluster_idx].append(point_shift)
+            self.labels[point_idx] = cluster_idx
+
+        # Now update the centroids based on the new cluster assignments
+        for cluster_idx, shifted_points in cluster_points.items():
+            self.centroids[cluster_idx] = np.mean(shifted_points, axis=0)
