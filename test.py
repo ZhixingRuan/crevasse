@@ -3,7 +3,7 @@ import glob
 import time
 
 import numpy as np
-from ckmeans import CKMEANS, CKMEANS_MULTI
+from ckmeans import ckmeans
 from matplotlib import pyplot as plt
 from numpy.ctypeslib import ndpointer
 from PIL import Image
@@ -121,14 +121,10 @@ if __name__ == '__main__':
     lss_norm = np.array(lss_norm)
 
     start = time.time()
-    kmeans = CKMEANS(data=lss_norm, n_clusters=10, max_iterations=200, seed=0)
-    kmeans.run()
+    labels, label_convergence = ckmeans(
+        data=lss_norm, n_clusters=10, max_iterations=200, seed=0
+    )
     print(f'Single process time: {time.time() - start} seconds')
 
-    start = time.time()
-    kmeans = CKMEANS_MULTI(data=lss_norm, n_clusters=10, max_iterations=200, seed=0)
-    kmeans.run()
-    print(f'Multi process time: {time.time() - start} seconds')
-
-    plt.plot(kmeans.label_convergence)
+    plt.plot(label_convergence)
     plt.show()
