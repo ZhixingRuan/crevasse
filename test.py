@@ -124,7 +124,7 @@ if __name__ == '__main__':
     labels, label_convergence = ckmeans(
         data=lss_norm, n_clusters=10, max_iterations=200, seed=0
     )
-    print(f'Single process time: {time.time() - start} seconds')
+    print(f'Processing time: {time.time() - start} seconds')
 
     plt.plot(label_convergence)
     plt.show()
