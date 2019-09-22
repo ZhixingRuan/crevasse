@@ -2,8 +2,8 @@ from collections import defaultdict
 from functools import partial
 
 import numpy as np
-from numpy.fft import fft, ifft
 from pathos.multiprocessing import ProcessingPool as Pool
+from scipy.fftpack import fft, ifft
 
 
 def ckmeans(data, n_clusters, max_iterations, seed=0):
