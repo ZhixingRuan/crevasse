@@ -2,31 +2,52 @@ from collections import defaultdict
 from functools import partial
 
 import numpy as np
-from numpy.fft import fft, ifft
+from scipy.fftpack import fft, ifft
 from pathos.multiprocessing import ProcessingPool as Pool
+from tqdm import tqdm
 
 
-def ckmeans(data, n_clusters, max_iterations, seed=0):
-    total_iterations = 0
+def ckmeans(data, n_clusters, max_iterations, seed=0, rtol=1e-5):
+    # rtol for centers convergence, can be set as 1e-4
+    #total_iteration = 0
     label_convergence = []
     labels = np.empty(data.shape[0])
+    centers_shift = []
 
     centroids = init_centroids(data, n_clusters)
-    while total_iterations < max_iterations:
+    #while total_iterations < max_iterations:
+    for total_iterations in tqdm(range(max_iterations)):
         previous_centroids = centroids.copy()
         previous_labels = labels.copy()
 
-        # labels, centroids = perform_iteration(data, centroids)
+        #labels, centroids = perform_iteration(data, centroids)
         labels, centroids = perform_iteration_multi(data, centroids)
 
         label_convergence.append(sum(np.array(previous_labels) != np.array(labels)))
 
-        if np.allclose(previous_centroids, centroids):
+        #if np.allclose(previous_centroids, centroids, rtol):
+        #    print('centroids the same')
+        #    break
+        c_shift = cal_centers_shift(previous_centroids, centroids)
+        centers_shift.append(c_shift)
+        if c_shift <= rtol:
+            print('centers close')
             break
 
         total_iterations += 1
 
-    return labels, label_convergence
+    return labels, label_convergence, centroids, centers_shift
+
+def ckmeans_predict(data, centroids):
+    # cluster test data using sample centroids
+    func = partial(assign_to_cluster, centroids=centroids)
+    results = Pool().map(func, data)
+
+    labels = np.empty(data.shape[0])
+    for point_idx, (cluster_idx, point_shift) in enumerate(results):
+        labels[point_idx] = cluster_idx
+
+    return labels
 
 
 def compute_distance(point, centroid):
@@ -42,12 +63,14 @@ def compute_distance(point, centroid):
 
 
 def assign_to_cluster(point, centroids):
+    angbin = 12
+    radbin = 3
     distances, rotation_indices = zip(
         *[compute_distance(point, centroid) for centroid in centroids]
     )
     closest_cluster = np.argmin(distances)
     rotation_index = rotation_indices[closest_cluster]
-    point_shift = np.roll(point.reshape(8, 3), rotation_index)
+    point_shift = np.roll(point.reshape(angbin, radbin), rotation_index)
     point_shift = point_shift.flatten()
 
     return closest_cluster, point_shift
@@ -61,6 +84,53 @@ def init_centroids(data, n_clusters, seed=0):
     centers = data[seeds]
 
     return np.array(centers)
+
+def init_centroids_plus(data, n_clusters, seed=0):
+    # selects initial cluster centers in a smart way to speed up converge
+    # see "k-means++: the advantages of careful seeding"
+
+    n_samples, n_features = data.shape
+    centers = np.empty((n_clusters, n_features), dtype=data.dtype)
+    n_local_trials = 2 + int(np.log(n_clusters))
+
+    # initial first center randomly
+    random_state = np.random.RandomState(seed)
+    seeds = random_state.randint(n_samples)
+    centers[0] = data[seeds]
+    
+    closest_dist = []
+    for i in range(n_samples):
+        dist, temp = compute_distance(data[i], centers[0])
+        closest_dist.append(dist)
+    closest_dist = np.array(closest_dist)
+    current_pot = closest_dist.sum()
+
+    # pick the remaining n-1 points
+    for c in range(1, n_clusters):
+        rand_vals = random_state.random_sample(n_local_trials) * current_pot
+        candidate_ids = np.searchsorted(np.cumsum(closest_dist), rand_vals)
+        #np.clip(candidate_ids, None, closest_dist.size - 1, out=candidate_ids)
+        np.clip(candidate_ids, None, n_samples - 1, out=candidate_ids)
+
+        dist_to_candidate = np.empty((len(candidate_ids), n_samples))
+        for i in range(len(candidate_ids)):
+            ids = candidate_ids[i]
+            for j in range(n_samples):
+                dist, temp = compute_distance(data[j], data[ids])
+                dist_to_candidate[i][j] = dist
+        
+        np.minimum(closest_dist, dist_to_candidate, out=dist_to_candidate)
+        candidate_pot = dist_to_candidate.sum(axis=1)
+
+        best_candidate = np.argmin(candidate_pot)
+        current_pot = candidate_pot[best_candidate]
+        closest_dist = dist_to_candidate[best_candidate]
+        best_candidate = candidate_ids[best_candidate]
+
+        centers[c] = data[best_candidate]
+
+    return centers
+
 
 
 def perform_iteration(data, centroids):
@@ -95,3 +165,24 @@ def perform_iteration_multi(data, centroids):
         centroids[cluster_idx] = np.mean(shifted_points, axis=0)
 
     return labels, centroids
+
+def cal_centers_shift(previous_centers, centers):
+    shift = np.array(previous_centers) - np.array(centers)
+    shift_total = np.ravel(shift, order='K')
+    
+    return np.dot(shift_total, shift_total)
+
+
+def evaluate_ckmeans(data, label, center, n_clusters):
+    # evaluate results using distance
+    # elbow point
+
+    D = np.zeros(n_clusters)
+    for i in range(len(label)):
+        k = label[i]
+        c = center[int(k)]
+        d, r = compute_distance(data[i], c)
+        D[int(k)] += d
+
+    return sum(D)
+
